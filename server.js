@@ -5,7 +5,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import connectDB from './config/database.js';
-import { errorHandler, notFound } from './middlewares/errorMiddleware.js';
+import { errorHandler, notFound } from './middleware/errorMiddleware.js';
 
 // Import Routes
 import userRoutes from './routes/userRoutes.js';

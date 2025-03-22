@@ -1,6 +1,6 @@
 import mqtt from 'mqtt';
 import dotenv from 'dotenv';
-import DispenserDevice from '../models/dispenserDevice.model.js';
+import DispenserDevice from '../models/dispenserDeviceModel.js';
 import { handleStatusUpdate } from '../services/dispenser/statusService.js';
 import { handleDispensedConfirmation } from '../services/dispenser/dispensingService.js';
 import { handleInventoryUpdate } from '../services/inventory/inventoryService.js';

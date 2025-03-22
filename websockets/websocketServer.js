@@ -1,10 +1,10 @@
 import { Server } from 'socket.io';
-import { protect } from '../middlewares/authMiddleware.js';
 import jwt from 'jsonwebtoken';
-import User from '../models/user.model.js';
-import Device from '../models/device.model.js';
-import Dispensing from '../models/dispensing.model.js';
-import Medication from '../models/medication.model.js';
+import User from '../models/userModel.js';
+import DispenserDevice from '../models/dispenserDeviceModel.js';
+import DispensingLog from '../models/dispenserLogModel.js';
+import PatientMedication from '../models/patientModel.js';
+import Medication from '../models/medicationModel.js';
 
 const setupWebSocket = (httpServer) => {
   const io = new Server(httpServer, {
@@ -58,37 +58,39 @@ const setupWebSocket = (httpServer) => {
     }
     
     // Join role-based rooms (for admin broadcasts, etc.)
-    if (socket.user.roles) {
-      socket.user.roles.forEach(role => {
-        socket.join(`role:${role}`);
-      });
+    if (socket.user.role) {
+      socket.join(`role:${socket.user.role}`);
     }
     
     // Handle medication dispense events from devices
     socket.on('device:dispense', async (data) => {
       try {
         // Verify the device belongs to this user
-        const device = await Device.findById(data.deviceId);
+        const device = await DispenserDevice.findById(data.deviceId);
         if (!device || !socket.user.assignedDispensers.includes(data.deviceId)) {
           return socket.emit('error', { message: 'Unauthorized device access' });
         }
         
         // Create a dispense record
-        const dispensing = new Dispensing({
+        const dispensing = new DispensingLog({
           medication: data.medicationId,
-          user: socket.user._id,
+          patient: socket.user._id,
           device: data.deviceId,
-          quantity: data.quantity,
+          compartmentId: data.compartmentId,
+          quantity: {
+            tablets: data.quantity
+          },
           dispensedTime: new Date(),
-          status: 'dispensed'
+          status: 'dispensed',
+          scheduledTime: new Date() // Assuming this was scheduled for now
         });
         
         await dispensing.save();
         
-        // Update medication inventory
-        await Medication.findByIdAndUpdate(
-          data.medicationId,
-          { $inc: { remainingQuantity: -data.quantity } }
+        // Update medication inventory in PatientMedication
+        await PatientMedication.findOneAndUpdate(
+          { _id: data.medicationId },
+          { $inc: { 'inventoryTracking.currentQuantity': -data.quantity } }
         );
         
         // Confirm back to device
@@ -105,15 +107,20 @@ const setupWebSocket = (httpServer) => {
         });
         
         // Notify caregivers if configured
-        if (socket.user.caregivers && socket.user.caregivers.length > 0) {
-          socket.user.caregivers.forEach(caregiverId => {
-            emitToUser(caregiverId, 'patient:medication:dispensed', {
-              patientId: socket.user._id,
-              patientName: socket.user.name,
-              medicationId: data.medicationId,
-              dispensingId: dispensing._id,
-              time: new Date()
-            });
+        const emergencyContacts = socket.user.emergencyContacts || [];
+        if (emergencyContacts.length > 0) {
+          emergencyContacts.forEach(contact => {
+            if (contact.isPrimaryContact) {
+              // Assuming you have a way to map contacts to users
+              // You might need to adjust this logic based on your actual data model
+              emitToUser(contact._id, 'patient:medication:dispensed', {
+                patientId: socket.user._id,
+                patientName: socket.user.fullName,
+                medicationId: data.medicationId,
+                dispensingId: dispensing._id,
+                time: new Date()
+              });
+            }
           });
         }
       } catch (error) {
@@ -128,21 +135,21 @@ const setupWebSocket = (httpServer) => {
         const { dispensingId, status } = data;
         
         // Update dispensing record
-        const dispensing = await Dispensing.findById(dispensingId);
+        const dispensing = await DispensingLog.findById(dispensingId);
         
-        if (!dispensing || dispensing.user.toString() !== socket.user._id.toString()) {
+        if (!dispensing || dispensing.patient.toString() !== socket.user._id.toString()) {
           return socket.emit('error', { message: 'Unauthorized access to dispensing record' });
         }
         
         dispensing.status = status;
-        dispensing.confirmedTime = new Date();
+        dispensing.takenTime = new Date();
         await dispensing.save();
         
         // If status is 'missed' or 'skipped', return medication to inventory
         if (status === 'missed' || status === 'skipped') {
-          await Medication.findByIdAndUpdate(
-            dispensing.medication,
-            { $inc: { remainingQuantity: dispensing.quantity } }
+          await PatientMedication.findOneAndUpdate(
+            { _id: dispensing.medication },
+            { $inc: { 'inventoryTracking.currentQuantity': dispensing.quantity.tablets } }
           );
         }
         
@@ -153,16 +160,23 @@ const setupWebSocket = (httpServer) => {
         });
         
         // Notify caregivers if needed
-        if (status === 'missed' && socket.user.caregivers && socket.user.caregivers.length > 0) {
-          socket.user.caregivers.forEach(caregiverId => {
-            emitToUser(caregiverId, 'patient:medication:missed', {
-              patientId: socket.user._id,
-              patientName: socket.user.name,
-              medicationId: dispensing.medication,
-              dispensingId,
-              time: new Date()
+        if (status === 'missed') {
+          const emergencyContacts = socket.user.emergencyContacts || [];
+          if (emergencyContacts.length > 0) {
+            emergencyContacts.forEach(contact => {
+              if (contact.isPrimaryContact) {
+                // Logic to notify caregivers
+                // This would need to be adjusted based on your actual data model
+                emitToUser(contact._id, 'patient:medication:missed', {
+                  patientId: socket.user._id,
+                  patientName: socket.user.fullName,
+                  medicationId: dispensing.medication,
+                  dispensingId,
+                  time: new Date()
+                });
+              }
             });
-          });
+          }
         }
       } catch (error) {
         console.error('Medication confirmation error:', error);
@@ -173,27 +187,23 @@ const setupWebSocket = (httpServer) => {
     // Handle device status updates
     socket.on('device:status', async (data) => {
       try {
-        const { deviceId, status, batteryLevel, connectivity, error } = data;
+        const { deviceId, isOnline, batteryLevel, firmwareVersion, needsMaintenance } = data;
         
         // Verify the device belongs to this user
-        const device = await Device.findById(deviceId);
+        const device = await DispenserDevice.findById(deviceId);
         if (!device || !socket.user.assignedDispensers.includes(deviceId)) {
           return socket.emit('error', { message: 'Unauthorized device access' });
         }
         
         // Update device status
-        const updatedDevice = await Device.findByIdAndUpdate(
+        const updatedDevice = await DispenserDevice.findByIdAndUpdate(
           deviceId,
           {
-            status: status || device.status,
-            batteryLevel: batteryLevel || device.batteryLevel,
-            connectivity: connectivity || device.connectivity,
-            lastConnected: new Date(),
-            ...(error && { error: {
-              code: error.code,
-              message: error.message,
-              timestamp: new Date()
-            }})
+            'status.isOnline': isOnline !== undefined ? isOnline : device.status.isOnline,
+            'status.batteryLevel': batteryLevel || device.status.batteryLevel,
+            'status.firmwareVersion': firmwareVersion || device.status.firmwareVersion,
+            'status.needsMaintenance': needsMaintenance !== undefined ? needsMaintenance : device.status.needsMaintenance,
+            'status.lastPing': new Date()
           },
           { new: true }
         );
@@ -211,22 +221,26 @@ const setupWebSocket = (httpServer) => {
             time: new Date()
           });
           
-          // Notify caregivers too
-          if (socket.user.caregivers && socket.user.caregivers.length > 0) {
-            socket.user.caregivers.forEach(caregiverId => {
-              emitToUser(caregiverId, 'patient:device:lowBattery', {
-                patientId: socket.user._id,
-                patientName: socket.user.name,
-                deviceId,
-                batteryLevel,
-                time: new Date()
-              });
+          // Notify emergency contacts
+          const emergencyContacts = socket.user.emergencyContacts || [];
+          if (emergencyContacts.length > 0) {
+            emergencyContacts.forEach(contact => {
+              if (contact.isPrimaryContact) {
+                // Logic to notify emergency contacts
+                emitToUser(contact._id, 'patient:device:lowBattery', {
+                  patientId: socket.user._id,
+                  patientName: socket.user.fullName,
+                  deviceId,
+                  batteryLevel,
+                  time: new Date()
+                });
+              }
             });
           }
         }
         
         // Alert on connectivity issues
-        if (connectivity === 'offline') {
+        if (isOnline === false) {
           emitToUser(socket.user._id, 'device:offline', {
             deviceId,
             time: new Date()
@@ -241,26 +255,48 @@ const setupWebSocket = (httpServer) => {
     // Handle medication refill requests from devices
     socket.on('medication:refill', async (data) => {
       try {
-        const { medicationId, newQuantity } = data;
+        const { medicationId, newQuantity, compartmentId } = data;
         
-        // Verify user can access this medication
-        const medication = await Medication.findById(medicationId);
-        if (!medication || medication.user.toString() !== socket.user._id.toString()) {
+        // Verify user can access this medication and it's in their dispenser
+        const medication = await PatientMedication.findById(medicationId);
+        if (!medication || medication.patient.toString() !== socket.user._id.toString()) {
           return socket.emit('error', { message: 'Unauthorized medication access' });
         }
         
         // Update medication quantity
-        const updatedMedication = await Medication.findByIdAndUpdate(
+        const updatedMedication = await PatientMedication.findByIdAndUpdate(
           medicationId,
           { 
-            remainingQuantity: newQuantity,
-            lastRefillDate: new Date()
+            'inventoryTracking.currentQuantity': newQuantity,
+            'inventoryTracking.lastRefillDate': new Date()
           },
           { new: true }
         );
         
-        // Log the refill event
-        // You might want to create a separate model for tracking refills
+        // Update the dispenser compartment last filled date
+        if (compartmentId) {
+          // Find user's dispenser with this compartment
+          const dispenser = await DispenserDevice.findOne({
+            assignedUsers: socket.user._id,
+            'compartments.compartmentId': compartmentId
+          });
+          
+          if (dispenser) {
+            // Update the compartment's lastFilled date
+            await DispenserDevice.updateOne(
+              { 
+                _id: dispenser._id,
+                'compartments.compartmentId': compartmentId 
+              },
+              { 
+                $set: { 
+                  'compartments.$.lastFilled': new Date(),
+                  'compartments.$.currentQuantity': newQuantity 
+                } 
+              }
+            );
+          }
+        }
         
         // Confirm to user
         socket.emit('medication:refilled', { 
@@ -287,8 +323,9 @@ const setupWebSocket = (httpServer) => {
         const thirtyDaysAgo = new Date(now);
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         
-        const dispensings = await Dispensing.find({
-          user: socket.user._id,
+        // Updated to use the correct field names from DispensingLog model
+        const dispensings = await DispensingLog.find({
+          patient: socket.user._id,
           scheduledTime: { $gte: thirtyDaysAgo },
           status: { $in: ['taken', 'missed', 'skipped'] }
         });
@@ -306,6 +343,12 @@ const setupWebSocket = (httpServer) => {
           adherenceRate: parseFloat(adherenceRate.toFixed(2)),
           timeframe: '30 days'
         });
+        
+        // Update all patient medications with the new adherence rate
+        await PatientMedication.updateMany(
+          { patient: socket.user._id, isActive: true },
+          { adherenceRate: parseFloat(adherenceRate.toFixed(2)) }
+        );
       } catch (error) {
         console.error('Adherence check error:', error);
         socket.emit('error', { message: 'Failed to retrieve adherence stats' });
@@ -360,15 +403,20 @@ export const emitToAll = (event, data) => {
 export const emitScheduledDispense = async (dispensingId) => {
   try {
     // Find the dispensing record
-    const dispensing = await Dispensing.findById(dispensingId)
-      .populate('medication')
-      .populate('user');
+    const dispensing = await DispensingLog.findById(dispensingId)
+      .populate({
+        path: 'medication',
+        populate: {
+          path: 'medication'
+        }
+      })
+      .populate('patient');
       
     if (!dispensing) return false;
     
     // Find all user's connected devices
-    const devices = await Device.find({ 
-      _id: { $in: dispensing.user.assignedDispensers }
+    const devices = await DispenserDevice.find({ 
+      assignedUsers: dispensing.patient._id
     });
     
     // Emit to all devices
@@ -376,18 +424,18 @@ export const emitScheduledDispense = async (dispensingId) => {
       emitToDevice(device._id, 'schedule:dispense', {
         dispensingId: dispensing._id,
         medicationId: dispensing.medication._id,
-        medicationName: dispensing.medication.name,
-        quantity: dispensing.quantity,
+        medicationName: dispensing.medication.medication.name,
+        quantity: dispensing.quantity.tablets,
         scheduledTime: dispensing.scheduledTime
       });
     });
     
     // Emit to user
-    emitToUser(dispensing.user._id, 'medication:scheduled', {
+    emitToUser(dispensing.patient._id, 'medication:scheduled', {
       dispensingId: dispensing._id,
       medicationId: dispensing.medication._id,
-      medicationName: dispensing.medication.name,
-      quantity: dispensing.quantity,
+      medicationName: dispensing.medication.medication.name,
+      quantity: dispensing.quantity.tablets,
       scheduledTime: dispensing.scheduledTime
     });
     
@@ -401,28 +449,34 @@ export const emitScheduledDispense = async (dispensingId) => {
 export const sendReminder = async (userId, medicationId, message) => {
   try {
     const user = await User.findById(userId);
-    const medication = await Medication.findById(medicationId);
+    const patientMedication = await PatientMedication.findById(medicationId).populate('medication');
     
-    if (!user || !medication) return false;
+    if (!user || !patientMedication) return false;
     
     emitToUser(userId, 'reminder', {
       medicationId,
-      medicationName: medication.name,
+      medicationName: patientMedication.medication.name,
       message,
       time: new Date()
     });
     
-    // Also send to caregivers if needed
-    if (user.caregivers && user.caregivers.length > 0) {
-      user.caregivers.forEach(caregiverId => {
-        emitToUser(caregiverId, 'patient:reminder', {
-          patientId: userId,
-          patientName: user.name,
-          medicationId,
-          medicationName: medication.name,
-          message,
-          time: new Date()
-        });
+    // Also send to emergency contacts if needed
+    const emergencyContacts = user.emergencyContacts || [];
+    if (emergencyContacts.length > 0) {
+      emergencyContacts.forEach(contact => {
+        if (contact.isPrimaryContact) {
+          // Logic to notify emergency contacts
+          // This would need to be adjusted based on your actual data model
+          // Assuming you have a way to map contacts to users
+          emitToUser(contact._id, 'patient:reminder', {
+            patientId: userId,
+            patientName: user.fullName,
+            medicationId,
+            medicationName: patientMedication.medication.name,
+            message,
+            time: new Date()
+          });
+        }
       });
     }
     
