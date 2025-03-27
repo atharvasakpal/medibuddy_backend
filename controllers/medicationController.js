@@ -37,26 +37,19 @@ const getMedicationById = expressAsyncHandler(async (req, res) => {
 const createMedication = expressAsyncHandler(async (req, res) => {
   const {
     name,
-    description,
-    dosageForm,
     strength,
-    manufacturer,
-    prescriptionRequired,
-    sideEffects,
-    interactions,
-    user
+    strengthUnit,
+    shape,
+    color
   } = req.body;
 
   const medication = await Medication.create({
     name,
-    description,
-    dosageForm,
     strength,
-    manufacturer,
-    prescriptionRequired,
-    sideEffects,
-    interactions,
-    user
+    strengthUnit,
+    shape,
+    color,
+    dosageForm: 'tablet'
   });
 
   if (medication) {
@@ -71,26 +64,21 @@ const createMedication = expressAsyncHandler(async (req, res) => {
 // @route   PUT /api/medications/:id
 // @access  Admin/Healthcare Provider
 const updateMedication = expressAsyncHandler(async (req, res) => {
-  const medication = await Medication.findById(req.params.id);
-  
-  if (medication) {
-    medication.name = req.body.name || medication.name;
-    medication.description = req.body.description || medication.description;
-    medication.dosageForm = req.body.dosageForm || medication.dosageForm;
-    medication.strength = req.body.strength || medication.strength;
-    medication.manufacturer = req.body.manufacturer || medication.manufacturer;
-    medication.prescriptionRequired = req.body.prescriptionRequired !== undefined 
-      ? req.body.prescriptionRequired 
-      : medication.prescriptionRequired;
-    medication.sideEffects = req.body.sideEffects || medication.sideEffects;
-    medication.interactions = req.body.interactions || medication.interactions;
-    
-    const updatedMedication = await medication.save();
-    res.json(updatedMedication);
-  } else {
-    res.status(404);
-    throw new Error('Medication not found');
-  }
+ const medication = await Medication.findById(req.params.id);
+ 
+ if (medication) {
+   medication.name = req.body.name || medication.name;
+   medication.strength = req.body.strength || medication.strength;
+   medication.strengthUnit = req.body.strengthUnit || medication.strengthUnit;
+   medication.shape = req.body.shape || medication.shape;
+   medication.color = req.body.color || medication.color;
+   
+   const updatedMedication = await medication.save();
+   res.json(updatedMedication);
+ } else {
+   res.status(404);
+   throw new Error('Medication not found');
+ }
 });
 
 // @desc    Delete medication

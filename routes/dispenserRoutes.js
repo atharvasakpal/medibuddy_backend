@@ -1,48 +1,42 @@
-// dispenserRoutes.js
 import express from 'express';
 import { 
-  getDispensers, 
-  getDispenserById, 
-  registerDispenser, 
-  updateDispenser, 
-  deleteDispenser,
-  getUserDispensers,
-  syncDispenser,
-  calibrateDispenser
+  registerDispenserDevice, 
+  getDispenserDeviceById,
+  createDispensingLog,
+  updateDispensingLogStatus,
+  getUpcomingDispenses
 } from '../controllers/dispenserController.js';
-import { protect, authorize, syncUser } from '../middleware/authMiddleware.js';
+import { protect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // Public webhook for IoT device communication
 router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const payload = req.body;
-  // Handle dispenser events - refill, malfunction, dose taken
+  // Handle basic dispenser events
   console.log('Dispenser webhook received:', payload);
   res.status(200).json({ received: true });
 });
 
-// Protected routes
+// Protect all routes after this point
 router.use(protect);
-router.use(syncUser);
 
+// Dispenser device management
 router.route('/')
-  .get(getUserDispensers)
-  .post(registerDispenser);
+  .post(registerDispenserDevice);
 
 router.route('/:id')
-  .get(getDispenserById)
-  .put(updateDispenser)
-  .delete(deleteDispenser);
+  .get(getDispenserDeviceById);
 
-router.route('/:id/sync')
-  .post(syncDispenser);
+// Dispensing log routes
+router.route('/:id/logs')
+  .post(createDispensingLog);
 
-router.route('/:id/calibrate')
-  .post(calibrateDispenser);
+router.route('/logs/:logId')
+  .put(updateDispensingLogStatus);
 
-// Admin only routes
-router.route('/all')
-  .get(authorize('admin'), getDispensers);
+// Patient upcoming dispenses
+router.route('/upcoming/:patientId')
+  .get(getUpcomingDispenses);
 
 export default router;
