@@ -1,13 +1,9 @@
-// alertRoutes.js
 import express from 'express';
 import { 
-  getAlerts, 
-  getAlertById, 
   createAlert, 
-  updateAlert, 
-  dismissAlert,
-  getUserAlerts,
-  sendTestAlert
+  getAlertsByPatient, 
+  updateAlertStatus,
+  getMissedDoseAlerts
 } from '../controllers/alertController.js';
 import { protect, authorize, syncUser } from '../middleware/authMiddleware.js';
 
@@ -17,20 +13,19 @@ const router = express.Router();
 router.use(protect);
 router.use(syncUser);
 
+// Patient-specific alerts (for patient and authorized users)
+router.route('/patient/:patientId')
+  .get(getAlertsByPatient);
+
+// Missed dose alerts for a specific patient
+router.route('/misseddoses/:patientId')
+  .get(getMissedDoseAlerts);
+
+// General alert management routes
 router.route('/')
-  .get(getUserAlerts)
   .post(authorize('admin', 'healthcare_provider'), createAlert);
 
 router.route('/:id')
-  .get(getAlertById)
-  .put(authorize('admin', 'healthcare_provider'), updateAlert)
-  .patch(dismissAlert);
-
-router.route('/test')
-  .post(sendTestAlert);
-
-// Admin and healthcare provider routes
-router.route('/all')
-  .get(authorize('admin', 'healthcare_provider'), getAlerts);
+  .put(authorize('admin', 'healthcare_provider'), updateAlertStatus);
 
 export default router;
