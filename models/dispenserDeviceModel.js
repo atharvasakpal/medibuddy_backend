@@ -56,8 +56,8 @@ const DispenserDeviceSchema = new Schema({
   timestamps: true
 });
 
-// Basic indexes
-DispenserDeviceSchema.index({ deviceId: 1 });
+// REMOVED: Redundant index on deviceId
+// Kept index on ownedBy for performance
 DispenserDeviceSchema.index({ ownedBy: 1 });
 
 const DispenserDevice = mongoose.model('DispenserDevice', DispenserDeviceSchema);

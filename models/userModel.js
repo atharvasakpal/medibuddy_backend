@@ -97,10 +97,9 @@ const UserSchema = new Schema(
   }
 );
 
-// Indexes for performance
-UserSchema.index({ clerkId: 1 });
-UserSchema.index({ email: 1 });
-UserSchema.index({ role: 1 });
+// REMOVED EXPLICIT INDEXES
+// When you use `unique: true`, Mongoose automatically creates an index
+// So these explicit indexes were causing the duplicate warning
 
 // Virtual for full name
 UserSchema.virtual('fullName').get(function() {

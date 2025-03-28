@@ -5,12 +5,11 @@ dotenv.config();
 
 class MQTTController {
   constructor() {
-    this.MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883';
+    this.MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtts://localhost:8883';
     this.client = null;
     this.deviceState = {
       batteryLevel: 100,
       inventoryLevels: {
-        // Example medication compartments
         compartment1: { medication: 'Aspirin', quantity: 30 },
         compartment2: { medication: 'Ibuprofen', quantity: 20 }
       },
@@ -22,23 +21,36 @@ class MQTTController {
   // Initialize MQTT Connection
   connect() {
     console.log('Connecting to MQTT broker...');
-    
-    this.client = mqtt.connect(this.MQTT_BROKER_URL);
-    
+
+    const options = {
+      username: process.env.MQTT_USERNAME || '', // Ensure credentials are set
+      password: process.env.MQTT_PASSWORD || '',
+      protocolId: 'MQTT',
+      protocolVersion: 4,
+      reconnectPeriod: 1000, // Auto-reconnect every 1 second
+      rejectUnauthorized: false // Ignore SSL errors if using self-signed certs
+    };
+
+    this.client = mqtt.connect(this.MQTT_BROKER_URL, options);
+
     this.client.on('connect', () => {
       console.log('Connected to MQTT broker');
       
       // Subscribe to relevant topics
-      this.client.subscribe('dispenser/command');
-      this.client.subscribe('dispenser/inventory');
-      this.client.subscribe('dispenser/device-status');
+      const topics = ['dispenser/command', 'dispenser/inventory', 'dispenser/device-status'];
+      this.client.subscribe(topics, (err) => {
+        if (err) {
+          console.error('Subscription error:', err);
+        } else {
+          console.log('Subscribed to topics:', topics);
+        }
+      });
     });
-    
-    // Message handling
+
+    // Handle received messages
     this.client.on('message', (topic, message) => {
       try {
         const payload = JSON.parse(message.toString());
-        
         switch (topic) {
           case 'dispenser/command':
             this.handleCommand(payload);
@@ -49,20 +61,31 @@ class MQTTController {
           case 'dispenser/device-status':
             this.updateDeviceStatus(payload);
             break;
+          default:
+            console.warn(`Received message on unknown topic: ${topic}`);
         }
       } catch (error) {
         console.error('Error processing message:', error);
       }
     });
-    
-    // Error handling
+
+    // Handle connection errors
     this.client.on('error', (err) => {
       console.error('MQTT connection error:', err);
     });
+
+    this.client.on('close', () => {
+      console.warn('MQTT connection closed. Reconnecting...');
+    });
+
+    this.client.on('reconnect', () => {
+      console.warn('Attempting to reconnect to MQTT broker...');
+    });
   }
 
-  // Scheduled Medication Dispensing
+  // Handle Commands (Dispensing & Scheduling)
   handleCommand(payload) {
+    if (!payload || !payload.type) return;
     switch (payload.type) {
       case 'dispense':
         this.dispense(payload);
@@ -70,48 +93,34 @@ class MQTTController {
       case 'schedule':
         this.scheduleDispensing(payload);
         break;
+      default:
+        console.warn('Unknown command type:', payload.type);
     }
   }
 
   // Dispense Medication
   dispense(payload) {
     const { compartment, medication } = payload;
-    
-    // Check inventory
-    if (this.deviceState.inventoryLevels[compartment].quantity > 0) {
-      // Decrease inventory
+
+    if (this.deviceState.inventoryLevels[compartment]?.quantity > 0) {
       this.deviceState.inventoryLevels[compartment].quantity -= 1;
-      
-      // Log dispensing event
       const dispensingEvent = {
         timestamp: new Date(),
-        medication: medication,
-        compartment: compartment
+        medication,
+        compartment
       };
-      
       this.deviceState.dispensingLog.push(dispensingEvent);
       this.deviceState.lastDispensed = dispensingEvent;
-      
-      // Publish dispensing confirmation
-      this.publishMessage('dispenser/dispensed', {
-        status: 'success',
-        ...dispensingEvent
-      });
-      
-      // Check low inventory
+
+      this.publishMessage('dispenser/dispensed', { status: 'success', ...dispensingEvent });
       this.checkInventoryLevels(compartment);
     } else {
-      // Publish error if no medication available
-      this.publishMessage('dispenser/dispensed', {
-        status: 'error',
-        message: 'Low inventory in compartment'
-      });
+      this.publishMessage('dispenser/dispensed', { status: 'error', message: 'Low inventory in compartment' });
     }
   }
 
   // Schedule Medication Dispensing
   scheduleDispensing(payload) {
-    // Placeholder for scheduling logic
     console.log('Medication schedule set:', payload);
     this.publishMessage('dispenser/schedule-confirmation', {
       status: 'scheduled',
@@ -119,36 +128,31 @@ class MQTTController {
     });
   }
 
-  // Inventory Tracking
+  // Update Inventory Levels
   updateInventory(payload) {
     const { compartment, quantity } = payload;
-    
     if (this.deviceState.inventoryLevels[compartment]) {
       this.deviceState.inventoryLevels[compartment].quantity = quantity;
       this.checkInventoryLevels(compartment);
     }
   }
 
-  // Check Inventory Levels
+  // Check Inventory and Send Alerts
   checkInventoryLevels(compartment) {
-    const inventoryLevel = this.deviceState.inventoryLevels[compartment].quantity;
-    
+    const inventoryLevel = this.deviceState.inventoryLevels[compartment]?.quantity || 0;
     if (inventoryLevel < 10) {
       this.publishMessage('dispenser/alerts', {
         type: 'low-inventory',
-        compartment: compartment,
+        compartment,
         currentQuantity: inventoryLevel
       });
     }
   }
 
-  // Device Health Monitoring
+  // Update Device Battery Status
   updateDeviceStatus(payload) {
     const { batteryLevel } = payload;
-    
     this.deviceState.batteryLevel = batteryLevel;
-    
-    // Battery low alert
     if (batteryLevel < 20) {
       this.publishMessage('dispenser/alerts', {
         type: 'low-battery',
@@ -163,7 +167,7 @@ class MQTTController {
       this.client.publish(topic, JSON.stringify(payload));
       console.log(`Message published to ${topic}:`, payload);
     } else {
-      console.error('Cannot publish - not connected');
+      console.error('Cannot publish - MQTT client not connected');
     }
   }
 
@@ -174,6 +178,7 @@ class MQTTController {
 }
 
 export default new MQTTController();
+
 
 
 
