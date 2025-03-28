@@ -6,7 +6,7 @@ import {
   createMedication, 
   updateMedication, 
   deleteMedication,
-  getUserMedications
+  
 } from '../controllers/medicationController.js';
 import { protect, authorize, syncUser } from '../middleware/authMiddleware.js';
 
@@ -18,7 +18,7 @@ router.use(syncUser);
 
 // User medication routes
 router.route('/')
-  .get(getUserMedications)
+  .get(getMedications)
   .post(createMedication);
 
 router.route('/:id')

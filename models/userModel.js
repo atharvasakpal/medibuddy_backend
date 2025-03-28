@@ -114,4 +114,4 @@ UserSchema.methods.isHealthcareProfessional = function() {
 
 const User = mongoose.model('User', UserSchema);
 
-module.exports = User;
+export default User

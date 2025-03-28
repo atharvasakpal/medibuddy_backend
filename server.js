@@ -17,7 +17,8 @@ import inventoryRoutes from './routes/inventoryRoutes.js';
 
 // Import WebSocket and MQTT setup
 import setupWebSocket from './websockets/websocketServer.js';
-import setupMQTT from './mqtt/mqttClient.js';
+// import setupMQTT from './mqtt/mqttClient.js';
+import MQTTController from './mqtt/mqttClient.js';
 
 // Load environment variables
 dotenv.config();
@@ -57,7 +58,8 @@ const server = app.listen(PORT, () => {
 setupWebSocket(server);
 
 // Setup MQTT client
-setupMQTT();
+// setupMQTT();
+MQTTController.connect();
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {

@@ -88,4 +88,5 @@ MedicationSchema.index({ barcode: 1 });
 
 const Medication = mongoose.model('Medication', MedicationSchema);
 
-module.exports = Medication;
+// module.exports = Medication;
+export default Medication

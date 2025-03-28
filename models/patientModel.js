@@ -109,4 +109,5 @@ PatientMedicationSchema.index({ patient: 1, isActive: 1 });
 
 const PatientMedication = mongoose.model('PatientMedication', PatientMedicationSchema);
 
-module.exports = PatientMedication;
+// module.exports = PatientMedication;
+export default PatientMedication;
