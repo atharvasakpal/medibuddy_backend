@@ -98,10 +98,132 @@ const deleteSchedule = expressAsyncHandler(async (req, res) => {
   res.json({ message: 'Schedule removed' });
 });
 
+
+// @desc    Get today's medication schedule grouped by time period
+// @route   GET /api/schedules/today/:patientId
+// @access  Private/Patient
+const getTodaysMedicationSchedule = expressAsyncHandler(async (req, res) => {
+  const patientId = req.params.patientId;
+  const today = new Date();
+  const dayOfWeek = today.getDay(); // 0-6 (Sunday-Saturday)
+  
+  // Get all active schedules for this patient
+  const schedules = await Schedule.find({
+    patient: patientId,
+    active: true,
+    daysOfWeek: dayOfWeek,
+    startDate: { $lte: today },
+    $or: [
+      { endDate: { $gte: today } },
+      { endDate: null }
+    ]
+  }).populate('medication', 'name strength strengthUnit shape color');
+  
+  // Group medications by time periods
+  const timeGroups = {
+    morning: [],
+    afternoon: [],
+    evening: []
+  };
+  
+  schedules.forEach(schedule => {
+    schedule.scheduleTimes.forEach(time => {
+      const [hours, minutes] = time.split(':').map(Number);
+      
+      // Simple logic to categorize times into periods
+      if (hours < 12) {
+        timeGroups.morning.push({
+          scheduleId: schedule._id,
+          medication: schedule.medication,
+          time,
+          dosage: schedule.dosage
+        });
+      } else if (hours < 17) {
+        timeGroups.afternoon.push({
+          scheduleId: schedule._id,
+          medication: schedule.medication,
+          time,
+          dosage: schedule.dosage
+        });
+      } else {
+        timeGroups.evening.push({
+          scheduleId: schedule._id,
+          medication: schedule.medication,
+          time,
+          dosage: schedule.dosage
+        });
+      }
+    });
+  });
+  
+  // Calculate total counts
+  const response = {
+    morning: {
+      count: timeGroups.morning.length,
+      medications: timeGroups.morning
+    },
+    afternoon: {
+      count: timeGroups.afternoon.length,
+      medications: timeGroups.afternoon
+    },
+    evening: {
+      count: timeGroups.evening.length,
+      medications: timeGroups.evening
+    }
+  };
+  
+  res.json(response);
+});
+
+// @desc    Calculate adherence rate over specified period
+// @route   GET /api/schedules/adherence/:patientId
+// @access  Private/Patient
+const getAdherenceRate = expressAsyncHandler(async (req, res) => {
+  const patientId = req.params.patientId;
+  const days = parseInt(req.query.days) || 30; // Default to 30 days
+  
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+  
+  // Get dispensing logs for this period
+  const dispensingLogs = await DispensingLog.find({
+    patient: patientId,
+    scheduledTime: { $gte: startDate, $lte: endDate }
+  });
+  
+  // Count total scheduled and taken
+  const totalScheduled = dispensingLogs.length;
+  const totalTaken = dispensingLogs.filter(log => 
+    log.status === 'taken' || log.status === 'dispensed'
+  ).length;
+  
+  // Calculate adherence rate
+  const adherenceRate = totalScheduled > 0 
+    ? Math.round((totalTaken / totalScheduled) * 100) 
+    : 100; // Default to 100% if no medications scheduled
+  
+  res.json({
+    adherenceRate,
+    period: {
+      startDate,
+      endDate,
+      days
+    },
+    stats: {
+      totalScheduled,
+      totalTaken,
+      totalMissed: totalScheduled - totalTaken
+    }
+  });
+});
+
 export {
   getAllSchedules,
   getScheduleById,
   createSchedule,
   updateSchedule,
-  deleteSchedule
+  deleteSchedule,
+  getTodaysMedicationSchedule,
+  getAdherenceRate
 }
